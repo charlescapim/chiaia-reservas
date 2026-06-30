@@ -1,4 +1,9 @@
 import { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = "https://djomakduygryaqjcsduf.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqb21ha2R1eWdyeWFxamNzZHVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MjQ1NTgsImV4cCI6MjA5ODQwMDU1OH0.kY8SDXOAEW6YMl2geqCPf3R8miGzoNrQdSMdmtNYNvY";
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const WHATSAPP_NUMBER = "5551997695957";
 const ADMIN_PASSWORD = "admin123";
@@ -65,15 +70,81 @@ export default function App() {
   const [newEv, setNewEv] = useState({ title:"",date:"",time:"",description:"",capacity:20,price:"",pixKey:"",creditLink:"",type:"Vinho" });
   const today = new Date();
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(()=>{
     (async()=>{
-      try { const r=await window.storage.get("chiaia_r3"); if(r) setReservations(JSON.parse(r.value)); } catch {}
-      try { const e=await window.storage.get("chiaia_e3"); if(e) setEvents(JSON.parse(e.value)); } catch {}
+      try {
+        const { data: evData, error: evErr } = await supabase.from("events").select("*").order("date");
+        if (!evErr && evData && evData.length > 0) {
+          setEvents(evData.map(e => ({
+            id: e.id, title: e.title, date: e.date, time: e.time, description: e.description,
+            capacity: e.capacity, price: e.price, pixKey: e.pix_key, creditLink: e.credit_link, type: e.type
+          })));
+        } else if (!evErr && evData && evData.length === 0) {
+          // Seed initial events into Supabase on first run
+          for (const ev of INITIAL_EVENTS) {
+            await supabase.from("events").insert({
+              title: ev.title, date: ev.date, time: ev.time, description: ev.description,
+              capacity: ev.capacity, price: ev.price, pix_key: ev.pixKey, credit_link: ev.creditLink, type: ev.type
+            });
+          }
+          const { data: seeded } = await supabase.from("events").select("*").order("date");
+          if (seeded) setEvents(seeded.map(e => ({
+            id: e.id, title: e.title, date: e.date, time: e.time, description: e.description,
+            capacity: e.capacity, price: e.price, pixKey: e.pix_key, creditLink: e.credit_link, type: e.type
+          })));
+        }
+      } catch (err) { console.error("Erro ao carregar eventos:", err); }
+
+      try {
+        const { data: resData, error: resErr } = await supabase.from("reservations").select("*").order("id", { ascending: false });
+        if (!resErr && resData) {
+          setReservations(resData.map(r => ({
+            id: r.id, code: r.code, eventId: r.event_id, eventTitle: r.event_title, eventDate: r.event_date,
+            eventTime: r.event_time, eventPrice: r.event_price, name: r.name, email: r.email, phone: r.phone,
+            guests: r.guests, status: r.status, createdAt: r.created_at
+          })));
+        }
+      } catch (err) { console.error("Erro ao carregar reservas:", err); }
+      setLoading(false);
     })();
   },[]);
 
-  const saveR = async (d)=>{ setReservations(d); await window.storage.set("chiaia_r3",JSON.stringify(d)); };
-  const saveE = async (d)=>{ setEvents(d); await window.storage.set("chiaia_e3",JSON.stringify(d)); };
+  const saveR = async (newReservation) => {
+    const { data, error } = await supabase.from("reservations").insert({
+      code: newReservation.code, event_id: newReservation.eventId, event_title: newReservation.eventTitle,
+      event_date: newReservation.eventDate, event_time: newReservation.eventTime, event_price: newReservation.eventPrice,
+      name: newReservation.name, email: newReservation.email, phone: newReservation.phone,
+      guests: newReservation.guests, status: newReservation.status
+    }).select().single();
+    if (error) { console.error("Erro ao salvar reserva:", error); return null; }
+    const mapped = { id:data.id, code:data.code, eventId:data.event_id, eventTitle:data.event_title, eventDate:data.event_date, eventTime:data.event_time, eventPrice:data.event_price, name:data.name, email:data.email, phone:data.phone, guests:data.guests, status:data.status, createdAt:data.created_at };
+    setReservations(prev => [mapped, ...prev]);
+    return mapped;
+  };
+
+  const updateReservationStatus = async (id, status) => {
+    const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
+    if (error) { console.error("Erro ao atualizar reserva:", error); return; }
+    setReservations(prev => prev.map(r => r.id===id ? {...r, status} : r));
+  };
+
+  const saveE = async (newEv) => {
+    const { data, error } = await supabase.from("events").insert({
+      title: newEv.title, date: newEv.date, time: newEv.time, description: newEv.description,
+      capacity: newEv.capacity, price: newEv.price, pix_key: newEv.pixKey, credit_link: newEv.creditLink, type: newEv.type
+    }).select().single();
+    if (error) { console.error("Erro ao salvar evento:", error); return; }
+    const mapped = { id:data.id, title:data.title, date:data.date, time:data.time, description:data.description, capacity:data.capacity, price:data.price, pixKey:data.pix_key, creditLink:data.credit_link, type:data.type };
+    setEvents(prev => [...prev, mapped]);
+  };
+
+  const removeEvent = async (id) => {
+    const { error } = await supabase.from("events").delete().eq("id", id);
+    if (error) { console.error("Erro ao remover evento:", error); return; }
+    setEvents(prev => prev.filter(e => e.id !== id));
+  };
 
   const avail = (id)=>{
     const ev=events.find(e=>e.id===id); if(!ev) return 0;
@@ -103,19 +174,20 @@ export default function App() {
     if(!form.name||!form.email||!form.phone) return;
     if(form.guests>avail(selEv.id)) return;
     const code=genCode();
-    const res={ id:Date.now(), code, eventId:selEv.id, eventTitle:selEv.title, eventDate:selEv.date, eventTime:selEv.time, eventPrice:selEv.price, ...form, status:"aguardando pagamento", createdAt:new Date().toISOString() };
-    await saveR([...reservations,res]);
-    setLastRes({res,ev:selEv});
+    const newRes={ code, eventId:selEv.id, eventTitle:selEv.title, eventDate:selEv.date, eventTime:selEv.time, eventPrice:selEv.price, ...form, status:"aguardando pagamento" };
+    const saved = await saveR(newRes);
+    if (!saved) { alert("Erro ao salvar reserva. Tente novamente."); return; }
+    setLastRes({res:saved,ev:selEv});
     setView("confirmation");
   };
 
   const openWA=(res,ev)=>window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${waMsg(res,ev)}`,"_blank");
-  const cancelR=async(id)=>await saveR(reservations.map(r=>r.id===id?{...r,status:"cancelada"}:r));
-  const confirmPaid=async(id)=>await saveR(reservations.map(r=>r.id===id?{...r,status:"pago"}:r));
-  const deleteEv=async(id)=>await saveE(events.filter(e=>e.id!==id));
+  const cancelR=async(id)=>await updateReservationStatus(id,"cancelada");
+  const confirmPaid=async(id)=>await updateReservationStatus(id,"pago");
+  const deleteEv=async(id)=>await removeEvent(id);
   const addEv=async()=>{
     if(!newEv.title||!newEv.date||!newEv.time||!newEv.price) return;
-    await saveE([...events,{...newEv,id:Date.now(),capacity:Number(newEv.capacity)}]);
+    await saveE({...newEv,capacity:Number(newEv.capacity)});
     setNewEv({title:"",date:"",time:"",description:"",capacity:20,price:"",pixKey:"",creditLink:"",type:"Vinho"});
   };
 
@@ -194,6 +266,16 @@ export default function App() {
     tab:(a)=>({ padding:"9px 20px", fontSize:"9px", letterSpacing:"2px", textTransform:"uppercase", cursor:"pointer", background:"none", border:"none", color:a?C.terra:C.textLight, borderBottom:a?`2px solid ${C.terra}`:"2px solid transparent", fontFamily:"Georgia,serif" }),
     bar:(pct)=>({ width:`${pct}%`, height:"4px", background:pct>=90?C.terra:pct>=60?"#c87010":C.greenMid, transition:"width .3s" }),
   };
+
+  // LOADING
+  if(loading){
+    return(
+      <div style={{minHeight:"100vh",background:C.green,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"16px"}}>
+        <img src={LOGO_MARK} alt="Chiaia" style={{width:"56px",opacity:.9}}/>
+        <span style={{fontSize:"10px",letterSpacing:"4px",color:C.creamDark,textTransform:"uppercase",fontFamily:"Georgia,serif"}}>Carregando…</span>
+      </div>
+    );
+  }
 
   const Nav = ()=>(
     <nav style={S.nav}>
@@ -357,7 +439,7 @@ export default function App() {
               <div style={{fontSize:"9px",letterSpacing:"2px",color:"#a06010",textTransform:"uppercase",marginBottom:"7px"}}>Pagamento pendente · R$ {total}</div>
               <div style={{fontSize:"12px",color:C.textMuted,lineHeight:1.7}}>
                 PIX: <code style={{color:C.green,fontSize:"11px"}}>{ev.pixKey||"A informar"}</code>
-                {ev.creditLink&&<><br/>Cartão: <a href={ev.creditLink} target="_blank" style={{color:C.terra,fontSize:"11px"}}>{ev.creditLink}</a></>}
+                {ev.creditLink&&<><br/>Cartão: <a href={ev.creditLink} target="_blank" rel="noopener noreferrer" style={{color:C.terra,fontSize:"11px"}}>{ev.creditLink}</a></>}
               </div>
             </div>
             <button style={{...S.btn,...S.btnWA,width:"100%",padding:"14px",marginBottom:"9px"}} onClick={()=>openWA(res,ev)}>
